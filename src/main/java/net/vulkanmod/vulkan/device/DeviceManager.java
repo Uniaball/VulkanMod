@@ -22,7 +22,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRSurface.*;
 import static org.lwjgl.vulkan.VK10.*;
-import org.lwjgl.vulkan.VK11; // 添加 VK11 导入
+import org.lwjgl.vulkan.VK11;
 
 public abstract class DeviceManager {
     public static List<Device> availableDevices;
@@ -177,13 +177,16 @@ public abstract class DeviceManager {
 
             VkPhysicalDeviceFeatures2 deviceFeatures = VkPhysicalDeviceFeatures2.calloc(stack);
             deviceFeatures.sType$Default();
-            deviceFeatures.features().samplerAnisotropy(device.availableFeatures.features().samplerAnisotropy());
-            deviceFeatures.features().logicOp(device.availableFeatures.features().logicOp());
+            
+            // 修复点1: 直接访问 VkPhysicalDeviceFeatures 的字段
+            deviceFeatures.features().samplerAnisotropy(device.availableFeatures.samplerAnisotropy());
+            deviceFeatures.features().logicOp(device.availableFeatures.logicOp());
+            
             // TODO: Disable indirect draw option if unsupported.
             deviceFeatures.features().multiDrawIndirect(device.isDrawIndirectSupported());
 
-            // Must not set line width to anything other than 1.0 if this is not supported
-            if (device.availableFeatures.features().wideLines()) {
+            // 修复点2: 直接访问 wideLines 字段
+            if (device.availableFeatures.wideLines()) {
                 deviceFeatures.features().wideLines(true);
                 VRenderSystem.canSetLineWidth = true;
             }
