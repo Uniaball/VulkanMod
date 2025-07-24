@@ -22,7 +22,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRSurface.*;
 import static org.lwjgl.vulkan.VK10.*;
-import static org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
+import org.lwjgl.vulkan.VK11; // 添加 VK11 导入
 
 public abstract class DeviceManager {
     public static List<Device> availableDevices;
@@ -167,9 +167,13 @@ public abstract class DeviceManager {
                 queueCreateInfo.pQueuePriorities(stack.floats(1.0f));
             }
 
-            VkPhysicalDeviceVulkan11Features deviceVulkan11Features = VkPhysicalDeviceVulkan11Features.calloc(stack);
-            deviceVulkan11Features.sType$Default();
-            deviceVulkan11Features.shaderDrawParameters(device.isDrawIndirectSupported());
+            // 关键修改1：根据设备支持情况有条件启用 Vulkan 1.1 特性
+            VkPhysicalDeviceVulkan11Features deviceVulkan11Features = null;
+            if (device.isVulkan11Supported()) {
+                deviceVulkan11Features = VkPhysicalDeviceVulkan11Features.calloc(stack);
+                deviceVulkan11Features.sType$Default();
+                deviceVulkan11Features.shaderDrawParameters(device.isDrawIndirectSupported());
+            }
 
             VkPhysicalDeviceFeatures2 deviceFeatures = VkPhysicalDeviceFeatures2.calloc(stack);
             deviceFeatures.sType$Default();
@@ -189,24 +193,23 @@ public abstract class DeviceManager {
             createInfo.sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
             createInfo.pQueueCreateInfos(queueCreateInfos);
             createInfo.pEnabledFeatures(deviceFeatures.features());
-            createInfo.pNext(deviceVulkan11Features);
+            
+            // 有条件设置 pNext
+            if (deviceVulkan11Features != null) {
+                createInfo.pNext(deviceVulkan11Features);
+            }
 
             if (Vulkan.DYNAMIC_RENDERING) {
                 VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeaturesKHR = VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack);
                 dynamicRenderingFeaturesKHR.sType$Default();
                 dynamicRenderingFeaturesKHR.dynamicRendering(true);
 
-                deviceVulkan11Features.pNext(dynamicRenderingFeaturesKHR.address());
-
-//                //Vulkan 1.3 dynamic rendering
-//                VkPhysicalDeviceVulkan13Features deviceVulkan13Features = VkPhysicalDeviceVulkan13Features.calloc(stack);
-//                deviceVulkan13Features.sType$Default();
-//                if(!deviceInfo.availableFeatures13.dynamicRendering())
-//                    throw new RuntimeException("Device does not support dynamic rendering feature.");
-//
-//                deviceVulkan13Features.dynamicRendering(true);
-//                createInfo.pNext(deviceVulkan13Features);
-//                deviceVulkan13Features.pNext(deviceVulkan11Features.address());
+                // 关键修改2：正确链接 pNext 链
+                if (deviceVulkan11Features != null) {
+                    deviceVulkan11Features.pNext(dynamicRenderingFeaturesKHR.address());
+                } else {
+                    createInfo.pNext(dynamicRenderingFeaturesKHR);
+                }
             }
 
             createInfo.ppEnabledExtensionNames(asPointerBuffer(Vulkan.REQUIRED_EXTENSION));
@@ -220,7 +223,9 @@ public abstract class DeviceManager {
             int res = vkCreateDevice(physicalDevice, createInfo, null, pDevice);
             Vulkan.checkResult(res, "Failed to create logical device");
 
-            vkDevice = new VkDevice(pDevice.get(0), physicalDevice, createInfo, VK_API_VERSION_1_2);
+            // 关键修改3：使用设备实际支持的 Vulkan 版本
+            int apiVersion = device.properties.apiVersion();
+            vkDevice = new VkDevice(pDevice.get(0), physicalDevice, createInfo, apiVersion);
 
             graphicsQueue = new GraphicsQueue(stack, indices.graphicsFamily);
             transferQueue = new TransferQueue(stack, indices.transferFamily);
@@ -268,8 +273,15 @@ public abstract class DeviceManager {
             VkPhysicalDeviceFeatures supportedFeatures = VkPhysicalDeviceFeatures.malloc(stack);
             vkGetPhysicalDeviceFeatures(device, supportedFeatures);
             boolean anisotropicFilterSupported = supportedFeatures.samplerAnisotropy();
+            
+            // 关键修改4：检查 Vulkan 版本是否至少为 1.1
+            VkPhysicalDeviceProperties props = VkPhysicalDeviceProperties.malloc(stack);
+            vkGetPhysicalDeviceProperties(device, props);
+            int apiVersion = props.apiVersion();
+            boolean isVulkan11Supported = VK_VERSION_MAJOR(apiVersion) > 1 || 
+                (VK_VERSION_MAJOR(apiVersion) == 1 && VK_VERSION_MINOR(apiVersion) >= 1);
 
-            return indices.isSuitable() && extensionsSupported && swapChainAdequate;
+            return indices.isSuitable() && extensionsSupported && swapChainAdequate && isVulkan11Supported;
         }
     }
 
@@ -403,5 +415,4 @@ public abstract class DeviceManager {
         public VkSurfaceFormatKHR.Buffer formats;
         public IntBuffer presentModes;
     }
-
 }
